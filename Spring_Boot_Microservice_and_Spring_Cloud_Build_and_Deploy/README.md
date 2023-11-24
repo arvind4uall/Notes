@@ -4,14 +4,8 @@ Eureka Discovery Service is a REST-based service used for locating services for 
 
 Below diagram show how Eureka work.
 
-<!-- ![EurekaWorkFlowDiagram](images/Eureka.png) -->
+![EurekaWorkFlowDiagram](images/Eureka.png)
 
-<div style="text-align:center">
-    <figure>
-        <img src="images/Eureka.png" width="600" style="object-fit:contain"/>
-        <figcaption style="text-align:center">Work flow of Eureka</figcaption>
-    </figure> 
-</div>
 
 ### Create and Configure Eureka Discovery Server
 
@@ -51,13 +45,7 @@ eureka.client.service-url.defaultZone=http://${eureka.instance.hostname}:${serve
 
 After doing so we will be able to see Eureka server dashboard by visiting url http://localhost:8010. Here is the Screenshot of Eureka server Dashboard.
 
-<!-- ![EurekaServerDashboard](images/eurekaServerDashboard.png) -->
-<div style="text-align:center">
-    <figure>
-        <img src="images/eurekaServerDashboard.png" width="800" style="object-fit:contain"/>
-        <figcaption style="text-align:center">Eureka Server Dashboard</figcaption>
-    </figure>
-</div>
+![EurekaServerDashboard](images/eurekaServerDashboard.png)
 
 Upto this point we have created Eureka Server. Now, we will create client of it's and enable eureka client. For doing so we will follow these steps.
 
@@ -105,14 +93,8 @@ Netflix Eureka is a service registry that helps in managing microservices. When 
 
 When used together, Spring Cloud Gateway can use Eureka to discover the locations of microservices. This allows the Gateway to route requests to the appropriate services without needing to know their locations in advance. This combination can help to scale Spring applications easily in production environments and load balance them effectively.
 
-<!-- ![Alt text](image.png) -->
+![API Gateway Working](images/ApiGatewayWorking.png)
 
-<div style="text-align:center">
-    <figure>
-        <img src="images/ApiGatewayWorking.png" width="800" style="object-fit:contain"/>
-        <figcaption style="text-align:center">Api Gateway Working</figcaption>
-    </figure>
-</div>
 
 ### Creating Api Gateway Project
 
