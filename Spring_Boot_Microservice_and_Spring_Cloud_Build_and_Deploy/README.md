@@ -6,7 +6,6 @@ Below diagram show how Eureka work.
 
 ![EurekaWorkFlowDiagram](images/Eureka.png)
 
-
 ### Create and Configure Eureka Discovery Server
 
 - For this we will follow these steps
@@ -94,7 +93,6 @@ Netflix Eureka is a service registry that helps in managing microservices. When 
 When used together, Spring Cloud Gateway can use Eureka to discover the locations of microservices. This allows the Gateway to route requests to the appropriate services without needing to know their locations in advance. This combination can help to scale Spring applications easily in production environments and load balance them effectively.
 
 ![API Gateway Working](images/ApiGatewayWorking.png)
-
 
 ### Creating Api Gateway Project
 
@@ -360,3 +358,256 @@ A list of API Gateway filters is very long to be included in a single lecture. B
 You can bookmark these pages in your browser for quick access.
 
 ## Spring Cloud API Gateway as Load Balancer
+
+### Starting Up more microservices
+
+- If we start more instances of a microservices application then only the last instance will register itself with Eureka Discovery Service. In order to register all instances we will modify our application.properties.
+
+```properties
+# If we pass PORT value from command line then that or else application will run on random port.
+server.port=${PORT:0}
+spring.application.name=users-ws
+eureka.client.service-url.defaultZone=http://localhost:8010/eureka
+spring.devtools.restart.enabled=true
+
+# Instance will be named based on this criteria. If you pass spring.application.instance_id value from the command line then it will add that things in name or else random value.
+eureka.instance.instance-id=${spring.application.name}:${spring.application.instance_id:${random.value}}
+```
+
+- Here if we don not pass server.port or spring.application.instance_id value then default value will be assigned.
+- Here is the diagram showing multiple instances of a microservices.
+
+![MultipleInstance](image.png)
+
+- We can use this command to run our microservices instance
+
+```bash
+mvn spring-boot:run -Dspring-boot.run.arguments="--spring.application.instance_id=arvind1 --server.port=8083"
+```
+
+### How Load Balancer Work
+
+First request will come to API gateway then API Gateway will decide which instance of microservice to send the request. To check this we will change our UsersController's code. Here first I will read the environment variable using Environment object and then running Api Gateway application.
+
+```java
+@RestController
+@RequestMapping("/users")
+public class UsersController {
+  @Autowired
+  private Environment env;
+
+  @GetMapping("/status/check")
+  public String status(){
+    return "Working on port: "+env.getProperty("local.server.port");
+  }
+}
+
+```
+
+Here is the screenshot which Shows API Gateway is working.
+
+<div style="text-align:center">
+<img src="image-1.png" width="50%"><img src="image-2.png" width="50%">
+</div>
+
+## H2 In-memory Database
+
+To use h2 database first add these 2 dependency.
+
+```xml
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-jdbc</artifactId>
+</dependency>
+
+<dependency>
+	<groupId>com.h2database</groupId>
+	<artifactId>h2</artifactId>
+	<scope>runtime</scope>
+</dependency>
+```
+
+Now, add these things in application.properties.
+
+```properties
+# H2 in memory database settings
+spring.h2.console.enabled=true
+spring.datasource.url=jdbc:h2:mem:testdb
+spring.datasource.driverClassName=org.h2.Driver
+spring.jpa.database-platform=org.hibernate.dialect.H2Dialect
+
+# Allow api gateway and other microservice to use h2 database of users-ws
+spring.h2.console.settings.web-allow-others=true
+```
+
+# Users Microservice - Implementing user Sign Up
+
+We know that If springboot receive JSON object it automatically convert that into java object, But for this we will have to create a class first. Here I am creating class name CreateUserRequestModel.
+
+To add validation for this we will add this dependency.
+
+```xml
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-validation</artifactId>
+</dependency>
+```
+
+Now in CreateUserRequestModel Class we will add things like @NotNull, @Size(min="", max="", message="") etc
+
+```java
+public class CreateUserRequestModel {
+
+ @NotNull(message = "Please provide first name")
+ @Size(min =2, message = "First Name can't be less than 2 characters")
+  private String firstName;
+
+  @NotNull(message = "Please provide last name")
+  @Size(min =2, message = "Last Name can't be less than 2 characters")
+  private String lastName;
+
+  @NotNull(message = "Please provide email")
+  @Email
+  private String email;
+
+  @NotNull(message = "Password can not be blank")
+  @Size(min = 8,max = 12,message = "Please provide password in the range of 8-12 characters")
+  private String password;
+}
+
+```
+
+Now After adding validation, we will have to add @Valid annotation just before @RequestBody then only our validation will work.
+
+```java
+ public String createUser(@Valid @RequestBody CreateUserRequestModel userDetails)
+```
+
+- The serialVersionUID is a unique ID for each version of a serializable class. It’s used during deserialization to ensure the sender and receiver of a serialized object have compatible classes. If the serialVersionUID doesn’t match, an InvalidClassException is thrown. It’s recommended to declare this ID explicitly to avoid unexpected exceptions.
+
+To work with spring data jpa add this dependency
+
+```xml
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-data-jpa</artifactId>
+</dependency>
+```
+
+### ModelMapper
+
+ModelMapper is an intelligent, refactoring safe object mapping library that automatically maps objects to each other. It’s used in Spring Boot for the conversion of entity objects to Data Transfer Objects (DTOs) and vice-versa.
+
+To use ModelMapper use this dependency, here make sure to use dependency version also.
+
+```xml
+<dependency>
+	<groupId>org.modelmapper</groupId>
+	<artifactId>modelmapper</artifactId>
+	<version>3.2.0</version>
+</dependency>
+```
+
+### Add Spring Security to User Microservice.
+
+I can't store raw password directly into our database so for this I will use Spring Security, which will encrypt the raw password.
+
+For Spring Security I will use this dependency
+
+```xml
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+```
+
+After adding this dependency, It will protect all our urls automatically to get rid of this we will create this class
+
+```java
+
+@Configuration
+@EnableWebSecurity
+public class WebSecurity {
+
+  @Bean
+  protected SecurityFilterChain configure(HttpSecurity http) throws Exception{
+    http.csrf().disable();
+    http.authorizeHttpRequests()
+            .requestMatchers(HttpMethod.POST,"/users")
+            .permitAll()
+            .requestMatchers(new AntPathRequestMatcher("/h2-console/**")).permitAll()
+            .and()
+            .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS);
+
+    http.headers().frameOptions().disable();
+    return http.build();
+  }
+}
+
+```
+
+### Allow request from API gateway only
+
+Allow request to come from only certain IP address we will do the following changes.
+
+1. Create "gateway.ip" property in application.properties and assign it ip address.
+
+```properties
+gateway.ip=ip_address_which_you_want_to_allow
+```
+
+2. Do this modification in WebSecurity class.
+
+```java
+
+@Configuration
+@EnableWebSecurity
+public class WebSecurity {
+
+  @Autowired
+  private Environment environment;
+
+  @Bean
+  protected SecurityFilterChain configure(HttpSecurity http) throws Exception{
+    http.csrf().disable();
+
+    // This code allow allow request only from certain ip address.
+    http.authorizeHttpRequests()
+            .requestMatchers(HttpMethod.POST,"/users")
+            // .permitAll()
+            .access(new WebExpressionAuthorizationManager("hasIpAddress('"+environment.getProperty("gateway.ip")+"')"))
+            .requestMatchers(new AntPathRequestMatcher("/h2-console/**")).permitAll()
+            .and()
+            .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS);
+
+    http.headers().frameOptions().disable();
+    return http.build();
+  }
+}
+
+```
+
+By doing so spring security will allow request to only the given IP address.
+
+### Adding support to return XML value
+
+For getting XML value return back we will add these dependency
+
+```xml
+<dependency>
+	<groupId>com.fasterxml.jackson.dataformat</groupId>
+	<artifactId>jackson-dataformat-xml</artifactId>
+</dependency>
+```
+
+Only adding these dependency and sending "Accept=application/xml" will give XML back in response. However we can further add these things in our controller class.
+
+```
+@PostMapping(produces = {MediaType.APPLICATION_JSON_VALUE,MediaType.APPLICATION_XML_VALUE})
+```
+
+This code simply says this post method can return both json and xml value back. Below code says it can pass both xml or json value with request also.
+
+```
+@PostMapping(produces = {MediaType.APPLICATION_JSON_VALUE,MediaType.APPLICATION_XML_VALUE}, consumes={MediaType.APPLICATION_JSON_VALUE,MediaType.APPLICATION_XML_VALUE})
+```
