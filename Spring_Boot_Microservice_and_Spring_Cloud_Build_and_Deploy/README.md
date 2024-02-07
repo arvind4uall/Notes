@@ -611,3 +611,369 @@ This code simply says this post method can return both json and xml value back. 
 ```
 @PostMapping(produces = {MediaType.APPLICATION_JSON_VALUE,MediaType.APPLICATION_XML_VALUE}, consumes={MediaType.APPLICATION_JSON_VALUE,MediaType.APPLICATION_XML_VALUE})
 ```
+
+# Users Microservice - Implementing user Log in
+
+For this first create a class called LoginRequestModel
+
+```java
+public class LoginRequestModel {
+
+  @NotNull(message = "email field can't be null")
+  @Email
+  private String email;
+
+  @NotNull(message = "Password can't be null")
+  @Size(min = 8,max = 12,message = "Please provide password in the range of 8-12 characters")
+  private String password;
+
+  public String getEmail() {
+    return email;
+  }
+
+  public void setEmail(String email) {
+    this.email = email;
+  }
+
+  public String getPassword() {
+    return password;
+  }
+
+  public void setPassword(String password) {
+    this.password = password;
+  }
+}
+```
+
+Then create another class inside security package called AuthenticationFilter, attemptAuthentication method will called by spring boot automatically while performing login. After successfull Authentication successfulAuthentication method will be called. Here is the complete code of this section.
+
+```java
+// Make sure to import User class from this package
+// import org.springframework.security.core.userdetails.User;
+
+public class AuthenticationFilter extends UsernamePasswordAuthenticationFilter {
+
+  private UserService userService;
+  private Environment environment;
+
+  public AuthenticationFilter(UserService userService,
+          Environment environment,
+          AuthenticationManager authenticationManager){
+    super(authenticationManager);
+    this.userService=userService;
+    this.environment=environment;
+  }
+
+  @Override
+  public Authentication attemptAuthentication(HttpServletRequest req,
+                                              HttpServletResponse res) throws AuthenticationException {
+
+    try {
+      LoginRequestModel creds = new ObjectMapper().readValue(req.getInputStream(), LoginRequestModel.class);
+      return getAuthenticationManager().authenticate(
+              new UsernamePasswordAuthenticationToken(
+                      creds.getEmail(),
+                      creds.getPassword(),
+                      new ArrayList<>()));
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  // After user authentication successful this method will be called by Spring Boot
+
+  protected void successfulAuthentication(HttpServletRequest req,
+                                          HttpServletResponse res, FilterChain chain, Authentication auth) throws IOException, ServletException {
+
+    String username = ((User) auth.getPrincipal()).getUsername();
+
+    UserDto userDetails= userService.getUserDetailsByEmail(username);
+
+    String tokenSecret = environment.getProperty("token.secret");
+    byte[] secretKeyBytes= Base64.getEncoder().encode(tokenSecret.getBytes());
+
+    SecretKey secretKey= Keys.hmacShaKeyFor(secretKeyBytes);
+
+    Instant now = Instant.now();
+
+    String token= Jwts.builder().subject(username)
+            .expiration(Date.from(now.plusMillis(Long.parseLong(environment.getProperty("token.expiration_time")))))
+            .issuedAt(Date.from(now))
+            .signWith(secretKey)
+            .compact();
+
+    res.addHeader("token",token);
+    res.addHeader("userId",userDetails.getUserId());
+  }
+}
+
+
+```
+
+After Doing so we will register Authentication Filter with Http Security. For this we will modify our Web Security class.
+
+```java
+
+@Configuration
+@EnableWebSecurity
+public class WebSecurity {
+
+  @Autowired
+  private Environment environment;
+
+  @Bean
+  protected SecurityFilterChain configure(HttpSecurity http) throws Exception{
+
+    AuthenticationManagerBuilder authenticationManagerBuilder = http.getSharedObject(AuthenticationManagerBuilder.class);
+    AuthenticationManager authenticationManager = authenticationManagerBuilder.build();
+
+
+
+    http.csrf().disable();
+    http.authorizeHttpRequests()
+            .requestMatchers(HttpMethod.POST,"/users")
+            .access(new WebExpressionAuthorizationManager("hasIpAddress('"+environment.getProperty("gateway.ip")+"')"))
+            .requestMatchers(new AntPathRequestMatcher("/h2-console/**")).permitAll()
+            .and()
+            .addFilter(new AuthenticationFilter(authenticationManager))
+            .authenticationManager(authenticationManager)
+            .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS);
+
+    http.headers().frameOptions().disable();
+    return http.build();
+  }
+}
+```
+
+### Implementing loadUserByUsername() method
+
+For this follow this steps
+
+1. Add additional configuration inside Web security Class. Here is the complete code of Web Security class upto this section.
+
+```java
+@Configuration
+@EnableWebSecurity
+public class WebSecurity {
+
+  @Autowired
+  private Environment environment;
+
+  @Autowired
+  UserService userService;
+  @Autowired
+  BCryptPasswordEncoder bCryptPasswordEncoder;
+
+  @Bean
+  protected SecurityFilterChain configure(HttpSecurity http) throws Exception{
+    AuthenticationManagerBuilder authenticationManagerBuilder = http.getSharedObject(AuthenticationManagerBuilder.class);
+
+    authenticationManagerBuilder.userDetailsService(userService).passwordEncoder(bCryptPasswordEncoder);
+    AuthenticationManager authenticationManager = authenticationManagerBuilder.build();
+
+    // Create AuthenticationFilter
+
+    AuthenticationFilter authenticationFilter = new AuthenticationFilter(userService,environment,authenticationManager);
+    authenticationFilter.setFilterProcessesUrl(environment.getProperty("login.url.path"));
+
+    http.csrf().disable();
+    http.authorizeHttpRequests()
+            .requestMatchers(HttpMethod.POST,"/users")
+            .access(new WebExpressionAuthorizationManager(
+                    "hasIpAddress('"+environment.getProperty("gateway.ip")+"')"))
+            .requestMatchers(new AntPathRequestMatcher("/h2-console/**")).permitAll()
+            .and()
+            .addFilter(authenticationFilter)
+            .authenticationManager(authenticationManager)
+            .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS);
+
+    http.headers().frameOptions().disable();
+    return http.build();
+  }
+}
+```
+
+and extends UserService interface with UserDetailsService which is provided by Spring Security.
+
+```java
+public interface UserService extends UserDetailsService {
+  UserDto createUser(UserDto userDetails);
+  UserDto getUserDetailsByEmail(String email);
+}
+
+```
+
+### Adding JWT dependency
+
+For generating jwt token we wil add this dependency.
+
+```xml
+<dependency>
+		<groupId>io.jsonwebtoken</groupId>
+		<artifactId>jjwt</artifactId>
+		<version>0.12.3</version>
+</dependency>
+```
+
+## Spring Cloud API Gateway - Creating a Custom Filter
+
+```properties
+#Incoming requests to this URL will be allowed only if they contain an header starting with "Bearer" followed by any character.
+spring.cloud.gateway.routes[0].predicates[2]=Header=Authorization, Bearer (.*)
+```
+
+### Creating AuthorizationFilter Class
+
+This class will be created inside Api Gateway project
+
+```java
+@Component
+public class AuthorizationHeaderFilter extends AbstractGatewayFilterFactory<AuthorizationHeaderFilter.Config> {
+
+  public static class Config{
+    // put configuration properties here
+  }
+  @Override
+  public GatewayFilter apply(Config config) {
+    return null;
+  }
+}
+```
+
+In order to work this class we will assign our custom filter class to Gateway route.
+
+### Assign custom filter to a Gateway Route.
+
+For this we will add this line in application.properties file of API Gateway project.
+
+```properties
+# By adding this line AuthorizationHeaderFilter class will be executed before the spring cloud api gateway perform this routes
+spring.cloud.gateway.routes[0].filters[2]=AuthorizationHeaderFilter
+```
+
+Here is the complete code of AuthorizationHeaderFilter class
+
+```java
+@Component
+public class AuthorizationHeaderFilter extends AbstractGatewayFilterFactory<AuthorizationHeaderFilter.Config> {
+
+  @Autowired
+  Environment env;
+
+  public AuthorizationHeaderFilter() {
+    super(Config.class);
+  }
+
+  public static class Config {
+    // Put configuration properties here
+  }
+
+  @Override
+  public GatewayFilter apply(Config config) {
+    return (exchange, chain) -> {
+
+      ServerHttpRequest request = exchange.getRequest();
+
+      if (!request.getHeaders().containsKey(HttpHeaders.AUTHORIZATION)) {
+        return onError(exchange, "No authorization header", HttpStatus.UNAUTHORIZED);
+      }
+
+      String authorizationHeader = request.getHeaders().get(HttpHeaders.AUTHORIZATION).get(0);
+      String jwt = authorizationHeader.replace("Bearer", "").trim();
+
+      if (!isJwtValid(jwt)) {
+        return onError(exchange, "JWT token is not valid", HttpStatus.UNAUTHORIZED);
+      }
+      return chain.filter(exchange);
+    };
+  }
+
+  private Mono<Void> onError(ServerWebExchange exchange, String err, HttpStatus httpStatus) {
+    ServerHttpResponse response = exchange.getResponse();
+    response.setStatusCode(httpStatus);
+    return response.setComplete();
+  }
+
+  private boolean isJwtValid(String jwt) {
+    boolean returnValue = true;
+    String subject = null;
+    try {
+      byte[] secretKeyBytes = env.getProperty("token.secret").getBytes();
+      SecretKey key = Keys.hmacShaKeyFor(secretKeyBytes);
+      JwtParser parser = Jwts.parser()
+              .verifyWith(key)
+              .build();
+      subject = parser.parseSignedClaims(jwt).getPayload().getSubject();
+    } catch (Exception ex) {
+      returnValue = false;
+    }
+
+    if (subject == null || subject.isEmpty()) {
+      returnValue = false;
+    }
+
+    return returnValue;
+  }
+
+}
+
+```
+
+## Spring Cloud Api Gateway Global Filters
+
+Pre Filter - It is the filter which will be executed before the routes is entertained by API Gateway.
+Post Filter - It is the filter which will be executed after the routes is entertained by API Gateway.
+
+Here is the complete code of MyPreFilter class inside API Gateway
+
+```java
+@Component
+public class MyPreFilter implements GlobalFilter {
+  Logger logger= LoggerFactory.getLogger(MyPreFilter.class);
+  @Override
+  public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+    logger.info("My first Pre-filter is executed ... ");
+
+    String requestPath=exchange.getRequest().getPath().toString();
+    logger.info("Request path = "+requestPath);
+
+    HttpHeaders headers = exchange.getRequest().getHeaders();
+    Set<String> headerNames= headers.keySet();
+
+    headerNames.forEach(headerName->{
+      String headerValue = headers.getFirst(headerName);
+      logger.info(headerName+" "+headerValue);
+    });
+    return chain.filter(exchange);
+  }
+```
+
+This class will automatically be executed before the API gateway routes the request to the right microservices.
+
+Here is the code of MyPostFilter java class
+
+```java
+@Component
+public class MyPostFilter implements GlobalFilter {
+
+  Logger logger= LoggerFactory.getLogger(MyPostFilter.class);
+
+  @Override
+  public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+    return chain.filter(exchange).then(Mono.fromRunnable(()->{
+      // Add Some Code here
+      logger.info("Global Post-filter is executed ...");
+    }));
+  }
+}
+```
+
+This class will automatically executed after the API gateway routes the request to the concerned microservice.
+
+Till now, we have created separate class for Pre & Post filter. If we wish, we can create both in single class lets say its name is GlobalFiltersConfiguration.
+
+Here is the complete code for this class
+
+```java
+
+```
