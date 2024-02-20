@@ -1,5 +1,9 @@
 # DOCKER
 
+## What is Docker?
+
+Docker is a containerization platform that allows developers to easily build, deploy, and manage applications in containerized environments. Containers are lightweight, portable, and self-contained packages that include all the necessary dependencies and libraries needed to run a specific application.
+
 Docker images can be created using writing script in docker file. While container is an instance of of images. Container can be created any number of times while image is being created at only once.
 
 ### Docker Vs Virtual Machine
@@ -53,7 +57,7 @@ Here at port 3306 and 8301 of our system refers to mysql i.e is running on port 
 #### Volume mapping
 
 - Remember, the docker container has its own isolated file system and any changes to any files happen within the container.
-- Whenever we delete any container then the data inside data container also gets deleted. If we want to persist data then we map the container with directory outside the container on docker host.
+- Whenever we delete any container then the data inside container also gets deleted. If we want to persist data then we map the container with directory outside the container on docker host.
 
 15.
 
